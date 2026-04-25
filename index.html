@@ -1,0 +1,704 @@
+```html
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>通譯費試算 v10.0 - 里程優化版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
+        body { background-color: #0f172a; font-family: 'Noto Sans TC', sans-serif; -webkit-tap-highlight-color: transparent; }
+        .glass-card { background: rgba(30, 41, 59, 0.8); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 1.5rem; }
+        input { background: #1e293b; border: 1px solid #334155; color: white; padding: 0.75rem; border-radius: 0.75rem; width: 100%; font-size: 14px; }
+        .btn-main { background: linear-gradient(135deg, #6366f1 0%, #4338ca 100%); color: white; padding: 1.25rem; border-radius: 1rem; font-weight: 900; width: 100%; font-size: 1.1rem; }
+        .section-box { background: rgba(15, 23, 42, 0.4); padding: 1.25rem; border-radius: 1rem; border: 1px solid rgba(255,255,255,0.05); }
+        .label-text { font-size: 11px; font-weight: bold; color: #64748b; margin-bottom: 5px; display: block; }
+        .fee-item { display: flex; justify-content: space-between; font-size: 13px; color: #94a3b8; border-bottom: 1px solid rgba(255,255,255,0.05); padding: 10px 0; align-items: flex-start; }
+        .fee-val { color: #f8fafc; font-weight: bold; font-family: monospace; white-space: nowrap; margin-left: 10px; }
+        .rule-tag { font-size: 10px; color: #6366f1; background: rgba(99, 102, 241, 0.1); padding: 1px 5px; border-radius: 4px; margin-top: 2px; display: inline-block; }
+        .btn-osrm { background: #10b981; color: white; font-size: 10px; font-weight: bold; padding: 6px 12px; border-radius: 6px; }
+        .btn-gmaps { background: #4285F4; color: white; font-size: 10px; font-weight: bold; padding: 6px 12px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+        .coord-hint { font-size: 9px; color: #475569; margin-top: 4px; display: none; }
+        .fade-in { animation: fadeIn 0.3s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="text-slate-200 p-4 pb-40">
+
+    <div class="max-w-md mx-auto">
+        <header class="flex justify-between items-center py-6">
+            <div>
+                <h1 class="text-2xl font-black text-white tracking-tight">報支核算工具</h1>
+                <p class="text-slate-500 text-xs">依據 113年通譯費用標準</p>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="saveAllData()" class="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-1 rounded border border-indigo-500/30">儲存</button>
+                <button onclick="clearAllData()" class="text-[10px] bg-red-500/20 text-red-400 px-2 py-1 rounded border border-red-500/30">清空</button>
+            </div>
+        </header>
+
+        <!-- 規則快速說明 -->
+        <div class="glass-card p-4 mb-6 bg-indigo-500/5 border-indigo-500/20">
+            <h3 class="text-[11px] font-bold text-indigo-400 mb-2 uppercase tracking-widest">系統計算規則摘要</h3>
+            <ul class="text-[10px] text-slate-400 space-y-1 list-disc ml-4">
+                <li><b class="text-slate-300">基礎費：</b>前 2 小時 (日$1000 / 夜$2000)。</li>
+                <li><b class="text-slate-300">加計費：</b>滿 30 分進位 0.5h，滿 60 分計 1h。</li>
+                <li><b class="text-slate-300">里程計算：</b><span class="text-emerald-400 underline italic">OSRM 僅供參考，若誤差較大請以 Google Maps 手動輸入為主。</span></li>
+                <li><b class="text-slate-300">交通費：</b>里程扣除 10km 後，每公里 $2.431 (含 5% 稅)。</li>
+            </ul>
+        </div>
+
+        <!-- 1. 時段設定 -->
+        <div class="glass-card p-6 mb-6">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="font-black text-indigo-400 text-lg">服務時段與休息</h2>
+                <button onclick="addTimeBlock()" class="text-xs bg-indigo-500/20 text-indigo-300 px-4 py-2 rounded-full border border-indigo-500/30 font-bold">+ 新增</button>
+            </div>
+            <div id="timeBlocks" class="space-y-4"></div>
+        </div>
+
+        <!-- 2. 交通里程 -->
+        <div class="glass-card p-6 mb-6">
+            <h2 class="font-black text-emerald-400 text-lg mb-6">交通里程 (超過10km計費)</h2>
+            <div class="space-y-4">
+                <!-- 去程 -->
+                <div class="section-box">
+                    <div class="flex justify-between items-center mb-3">
+                        <span class="label-text text-emerald-500">【去程】</span>
+                        <div class="flex gap-1">
+                            <button onclick="getOSRM('oA', 'dA', 'oD', 'btn-o', 'coord-o')" id="btn-o" class="btn-osrm">OSRM</button>
+                            <a id="gmaps-o" href="#" onclick="prepareGMaps('oA', 'dA', this)" target="_blank" class="btn-gmaps">G-Maps</a>
+                        </div>
+                    </div>
+                    <div class="space-y-2 mb-3">
+                        <input type="text" id="oA" placeholder="起點地址 (如: 台北車站)" class="storage">
+                        <input type="text" id="dA" placeholder="目的地地址" class="storage">
+                        <div id="coord-o" class="coord-hint">抓取位置: <span class="loc-text"></span></div>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs text-slate-400">里程 (km):</span>
+                        <input type="number" id="oD" step="0.1" value="0.0" class="w-24 text-center font-bold text-emerald-400 storage">
+                    </div>
+                </div>
+
+                <!-- 返程 -->
+                <div class="section-box">
+                    <div class="flex justify-between items-center mb-3">
+                        <div class="flex items-center gap-2">
+                            <span class="label-text text-emerald-500">【返程】</span>
+                            <button onclick="copyAddr()" class="text-[9px] bg-slate-700/50 text-slate-300 px-2 py-0.5 rounded border border-white/10">對調</button>
+                        </div>
+                        <div class="flex gap-1">
+                            <button onclick="getOSRM('roA', 'rdA', 'rD', 'btn-r', 'coord-r')" id="btn-r" class="btn-osrm">OSRM</button>
+                            <a id="gmaps-r" href="#" onclick="prepareGMaps('roA', 'rdA', this)" target="_blank" class="btn-gmaps">G-Maps</a>
+                        </div>
+                    </div>
+                    <div class="space-y-2 mb-3">
+                        <input type="text" id="roA" placeholder="返程起點" class="storage">
+                        <input type="text" id="rdA" placeholder="返程終點" class="storage">
+                        <div id="coord-r" class="coord-hint">抓取位置: <span class="loc-text"></span></div>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs text-slate-400">里程 (km):</span>
+                        <input type="number" id="rD" step="0.1" value="0.0" class="w-24 text-center font-bold text-emerald-400 storage">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. 結果 -->
+        <div id="resArea" class="hidden fade-in">
+            <div class="glass-card p-6 border-2 border-indigo-500/30 shadow-2xl">
+                <div id="detailList" class="space-y-1 mb-6"></div>
+                <div class="flex justify-between items-end border-t border-white/10 pt-4">
+                    <span class="text-sm font-bold text-indigo-400 italic">應撥付總金額</span>
+                    <span id="resTotal" class="text-4xl font-black text-white italic"></span>
+                </div>
+            </div>
+        </div>
+
+        <div class="fixed bottom-0 left-0 right-0 p-4 bg-slate-900/95 backdrop-blur-md border-t border-white/5 z-50">
+            <button onclick="calculateAll()" class="btn-main shadow-lg">計算總金額</button>
+        </div>
+    </div>
+
+    <script>
+        window.onload = function() {
+            loadAllData();
+            if(document.querySelectorAll('[id^="b-"]').length === 0) addTimeBlock();
+        };
+
+        function addTimeBlock(data = null) {
+            const id = data ? data.id : Date.now();
+            const div = document.createElement('div');
+            div.className = 'section-box fade-in relative mb-4';
+            div.id = `b-${id}`;
+            div.innerHTML = `
+                <button onclick="document.getElementById('b-${id}').remove(); saveAllData();" class="absolute -top-2 -right-2 bg-slate-800 text-slate-500 rounded-full w-6 h-6 border border-white/10 flex items-center justify-center">×</button>
+                <div class="grid grid-cols-2 gap-4">
+                    <div><span class="label-text">開始時間</span><input type="datetime-local" class="s-time" value="${data?data.s:''}" onchange="saveAllData()"></div>
+                    <div><span class="label-text">結束時間</span><input type="datetime-local" class="e-time" value="${data?data.e:''}" onchange="saveAllData()"></div>
+                </div>
+                <div class="mt-4 pt-3 border-t border-white/5">
+                    <span class="label-text">休息扣除 (期間不計費)</span>
+                    <div class="grid grid-cols-2 gap-4">
+                        <input type="datetime-local" class="bs-time text-[10px]" value="${data?data.bs:''}" onchange="saveAllData()">
+                        <input type="datetime-local" class="be-time text-[10px]" value="${data?data.be:''}" onchange="saveAllData()">
+                    </div>
+                </div>`;
+            document.getElementById('timeBlocks').appendChild(div);
+            saveAllData();
+        }
+
+        function prepareGMaps(startId, endId, linkEl) {
+            const origin = document.getElementById(startId).value.trim();
+            const destination = document.getElementById(endId).value.trim();
+            if(!origin || !destination) {
+                alert("請先輸入地址");
+                event.preventDefault();
+                return false;
+            }
+            saveAllData();
+            const url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&travelmode=driving`;
+            linkEl.href = url;
+            return true;
+        }
+
+        function saveAllData() {
+            const data = {
+                times: [],
+                oA: document.getElementById('oA').value,
+                dA: document.getElementById('dA').value,
+                oD: document.getElementById('oD').value,
+                roA: document.getElementById('roA').value,
+                rdA: document.getElementById('rdA').value,
+                rD: document.getElementById('rD').value
+            };
+            document.querySelectorAll('[id^="b-"]').forEach(b => {
+                data.times.push({
+                    id: b.id.replace('b-', ''),
+                    s: b.querySelector('.s-time').value,
+                    e: b.querySelector('.e-time').value,
+                    bs: b.querySelector('.bs-time').value,
+                    be: b.querySelector('.be-time').value
+                });
+            });
+            localStorage.setItem('interpreter_store_v10', JSON.stringify(data));
+        }
+
+        function loadAllData() {
+            const saved = localStorage.getItem('interpreter_store_v10');
+            if(!saved) return;
+            const data = JSON.parse(saved);
+            document.getElementById('oA').value = data.oA || '';
+            document.getElementById('dA').value = data.dA || '';
+            document.getElementById('oD').value = data.oD || '0.0';
+            document.getElementById('roA').value = data.roA || '';
+            document.getElementById('rdA').value = data.rdA || '';
+            document.getElementById('rD').value = data.rD || '0.0';
+            if(data.times && data.times.length > 0) {
+                document.getElementById('timeBlocks').innerHTML = '';
+                data.times.forEach(t => addTimeBlock(t));
+            }
+        }
+
+        function clearAllData() {
+            if(confirm("重置所有資料？")) {
+                localStorage.removeItem('interpreter_store_v10');
+                location.reload();
+            }
+        }
+
+        async function getOSRM(startId, endId, targetId, btnId, hintId) {
+            const originAddr = document.getElementById(startId).value;
+            const destAddr = document.getElementById(endId).value;
+            const btn = document.getElementById(btnId);
+            const hint = document.getElementById(hintId);
+            
+            if(!originAddr || !destAddr) {
+                alert("請輸入起訖點地址");
+                return;
+            }
+            
+            btn.innerText = "搜尋中...";
+            hint.style.display = "none";
+
+            try {
+                // Nominatim Search (加上台灣限制與詳細資訊)
+                const getCoords = async (addr) => {
+                    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addr)}&countrycodes=tw&limit=1&addressdetails=1`);
+                    const d = await res.json();
+                    if(d.length === 0) throw new Error(`找不到地址: ${addr}`);
+                    return {
+                        coord: `${d[0].lon},${d[0].lat}`,
+                        display: d[0].display_name.split(',')[0] // 取得主要地名
+                    };
+                };
+
+                const sData = await getCoords(originAddr);
+                const eData = await getCoords(destAddr);
+                
+                // 顯示座標抓取提示
+                hint.style.display = "block";
+                hint.querySelector('.loc-text').innerText = `${sData.display} → ${eData.display}`;
+
+                const osrm = await fetch(`https://router.project-osrm.org/route/v1/driving/${sData.coord};${eData.coord}?overview=false`);
+                const d = await osrm.json();
+                
+                if(d.code !== "Ok") throw new Error("OSRM 無法計算路徑");
+
+                // 取得里程並無條件進位到小數點第一位
+                const distanceKm = (d.routes[0].distance / 1000).toFixed(1);
+                document.getElementById(targetId).value = distanceKm;
+                
+                saveAllData();
+            } catch(e) { 
+                alert(e.message || "測距失敗，建議開啟 Google Maps 查看里程並手動輸入。"); 
+            } finally {
+                btn.innerText = "OSRM";
+            }
+        }
+
+        function copyAddr() {
+            document.getElementById('roA').value = document.getElementById('dA').value;
+            document.getElementById('rdA').value = document.getElementById('oA').value;
+            document.getElementById('rD').value = document.getElementById('oD').value;
+            saveAllData();
+        }
+
+        function calculateAll() {
+            let minuteChain = [];
+            document.querySelectorAll('[id^="b-"]').forEach(b => {
+                const s = b.querySelector('.s-time').value, e = b.querySelector('.e-time').value;
+                if(!s || !e) return;
+                let start = new Date(s), end = new Date(e);
+                const bs = b.querySelector('.bs-time').value, be = b.querySelector('.be-time').value;
+                const bS = bs ? new Date(bs) : null, bE = be ? new Date(be) : null;
+                let curr = new Date(start);
+                while(curr < end) {
+                    const ts = curr.getTime();
+                    const inB = (bS && bE && ts >= bS.getTime() && ts < bE.getTime());
+                    if(!inB) minuteChain.push(new Date(curr));
+                    curr.setMinutes(curr.getMinutes() + 1);
+                }
+            });
+            minuteChain.sort((a,b) => a-b);
+            
+            let total = 0, listHtml = `<p class="text-[10px] text-indigo-400 font-bold mb-3 uppercase tracking-tighter italic">酬金明細 (有效時數: ${minuteChain.length}分鐘)</p>`;
+            const isN = (d) => { const h = d.getHours(); return h < 6 || h >= 22; };
+            
+            if(minuteChain.length > 0) {
+                const p1 = minuteChain.slice(0, 120), p1N = p1.some(d => isN(d)), p1F = p1N ? 2000 : 1000;
+                total += p1F;
+                listHtml += `
+                    <div class="fee-item">
+                        <div>
+                            <span class="block">基礎酬金 (前2小時)</span>
+                            <span class="rule-tag">${p1N?'夜間時段 $2000':'日間時段 $1000'}</span>
+                        </div>
+                        <span class="fee-val">$${p1F}</span>
+                    </div>`;
+
+                if (minuteChain.length > 120) {
+                    const rem = minuteChain.slice(120);
+                    for (let i = 0; i < rem.length; i += 60) {
+                        const chunk = rem.slice(i, i + 60);
+                        const n = chunk.some(d => isN(d)), rate = n ? 1000 : 500;
+                        let f = (chunk.length >= 30) ? rate : (rate/2);
+                        let rule = (chunk.length >= 30) ? `滿30分計1h (${n?'夜':'日'}$${rate})` : `未滿30分計0.5h (${n?'夜':'日'}$${rate/2})`;
+                        total += f;
+                        listHtml += `
+                            <div class="fee-item">
+                                <div>
+                                    <span class="block">加計酬金 (第 ${Math.floor(i/60)+3} 小時)</span>
+                                    <span class="rule-tag">${rule}</span>
+                                </div>
+                                <span class="fee-val">$${f}</span>
+                            </div>`;
+                    }
+                }
+            }
+
+            const oD = parseFloat(document.getElementById('oD').value) || 0, rD = parseFloat(document.getElementById('rD').value) || 0;
+            listHtml += `<p class="text-[10px] text-emerald-400 font-bold mt-5 mb-3 uppercase tracking-tighter italic">交通補助明細 (含5%稅)</p>`;
+            
+            const getTrans = (d, l) => {
+                let taxD = Math.max(0, d - 10);
+                let f = Math.round(taxD * 2.431 * 1.05);
+                listHtml += `
+                    <div class="fee-item">
+                        <div>
+                            <span class="block">${l} (總長 ${d}km)</span>
+                            <span class="rule-tag">計費里程: ${taxD}km (扣除10km)</span>
+                        </div>
+                        <span class="fee-val">$${f}</span>
+                    </div>`;
+                return f;
+            };
+            
+            const transF = getTrans(oD, "去程路段") + getTrans(rD, "返程路段");
+            
+            document.getElementById('detailList').innerHTML = listHtml;
+            document.getElementById('resTotal').innerText = `$${(total + transF).toLocaleString()}`;
+            document.getElementById('resArea').classList.remove('hidden');
+            window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+        }
+    </script>
+</body>
+</html>
+
+```
+
+```html
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>通譯費試算 v10.0 - 里程優化版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
+        body { background-color: #0f172a; font-family: 'Noto Sans TC', sans-serif; -webkit-tap-highlight-color: transparent; }
+        .glass-card { background: rgba(30, 41, 59, 0.8); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 1.5rem; }
+        input { background: #1e293b; border: 1px solid #334155; color: white; padding: 0.75rem; border-radius: 0.75rem; width: 100%; font-size: 14px; }
+        .btn-main { background: linear-gradient(135deg, #6366f1 0%, #4338ca 100%); color: white; padding: 1.25rem; border-radius: 1rem; font-weight: 900; width: 100%; font-size: 1.1rem; }
+        .section-box { background: rgba(15, 23, 42, 0.4); padding: 1.25rem; border-radius: 1rem; border: 1px solid rgba(255,255,255,0.05); }
+        .label-text { font-size: 11px; font-weight: bold; color: #64748b; margin-bottom: 5px; display: block; }
+        .fee-item { display: flex; justify-content: space-between; font-size: 13px; color: #94a3b8; border-bottom: 1px solid rgba(255,255,255,0.05); padding: 10px 0; align-items: flex-start; }
+        .fee-val { color: #f8fafc; font-weight: bold; font-family: monospace; white-space: nowrap; margin-left: 10px; }
+        .rule-tag { font-size: 10px; color: #6366f1; background: rgba(99, 102, 241, 0.1); padding: 1px 5px; border-radius: 4px; margin-top: 2px; display: inline-block; }
+        .btn-osrm { background: #10b981; color: white; font-size: 10px; font-weight: bold; padding: 6px 12px; border-radius: 6px; }
+        .btn-gmaps { background: #4285F4; color: white; font-size: 10px; font-weight: bold; padding: 6px 12px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+        .coord-hint { font-size: 9px; color: #475569; margin-top: 4px; display: none; }
+        .fade-in { animation: fadeIn 0.3s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="text-slate-200 p-4 pb-40">
+
+    <div class="max-w-md mx-auto">
+        <header class="flex justify-between items-center py-6">
+            <div>
+                <h1 class="text-2xl font-black text-white tracking-tight">報支核算工具</h1>
+                <p class="text-slate-500 text-xs">依據 113年通譯費用標準</p>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="saveAllData()" class="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-1 rounded border border-indigo-500/30">儲存</button>
+                <button onclick="clearAllData()" class="text-[10px] bg-red-500/20 text-red-400 px-2 py-1 rounded border border-red-500/30">清空</button>
+            </div>
+        </header>
+
+        <!-- 規則快速說明 -->
+        <div class="glass-card p-4 mb-6 bg-indigo-500/5 border-indigo-500/20">
+            <h3 class="text-[11px] font-bold text-indigo-400 mb-2 uppercase tracking-widest">系統計算規則摘要</h3>
+            <ul class="text-[10px] text-slate-400 space-y-1 list-disc ml-4">
+                <li><b class="text-slate-300">基礎費：</b>前 2 小時 (日$1000 / 夜$2000)。</li>
+                <li><b class="text-slate-300">加計費：</b>滿 30 分進位 0.5h，滿 60 分計 1h。</li>
+                <li><b class="text-slate-300">里程計算：</b><span class="text-emerald-400 underline italic">OSRM 僅供參考，若誤差較大請以 Google Maps 手動輸入為主。</span></li>
+                <li><b class="text-slate-300">交通費：</b>里程扣除 10km 後，每公里 $2.431 (含 5% 稅)。</li>
+            </ul>
+        </div>
+
+        <!-- 1. 時段設定 -->
+        <div class="glass-card p-6 mb-6">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="font-black text-indigo-400 text-lg">服務時段與休息</h2>
+                <button onclick="addTimeBlock()" class="text-xs bg-indigo-500/20 text-indigo-300 px-4 py-2 rounded-full border border-indigo-500/30 font-bold">+ 新增</button>
+            </div>
+            <div id="timeBlocks" class="space-y-4"></div>
+        </div>
+
+        <!-- 2. 交通里程 -->
+        <div class="glass-card p-6 mb-6">
+            <h2 class="font-black text-emerald-400 text-lg mb-6">交通里程 (超過10km計費)</h2>
+            <div class="space-y-4">
+                <!-- 去程 -->
+                <div class="section-box">
+                    <div class="flex justify-between items-center mb-3">
+                        <span class="label-text text-emerald-500">【去程】</span>
+                        <div class="flex gap-1">
+                            <button onclick="getOSRM('oA', 'dA', 'oD', 'btn-o', 'coord-o')" id="btn-o" class="btn-osrm">OSRM</button>
+                            <a id="gmaps-o" href="#" onclick="prepareGMaps('oA', 'dA', this)" target="_blank" class="btn-gmaps">G-Maps</a>
+                        </div>
+                    </div>
+                    <div class="space-y-2 mb-3">
+                        <input type="text" id="oA" placeholder="起點地址 (如: 台北車站)" class="storage">
+                        <input type="text" id="dA" placeholder="目的地地址" class="storage">
+                        <div id="coord-o" class="coord-hint">抓取位置: <span class="loc-text"></span></div>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs text-slate-400">里程 (km):</span>
+                        <input type="number" id="oD" step="0.1" value="0.0" class="w-24 text-center font-bold text-emerald-400 storage">
+                    </div>
+                </div>
+
+                <!-- 返程 -->
+                <div class="section-box">
+                    <div class="flex justify-between items-center mb-3">
+                        <div class="flex items-center gap-2">
+                            <span class="label-text text-emerald-500">【返程】</span>
+                            <button onclick="copyAddr()" class="text-[9px] bg-slate-700/50 text-slate-300 px-2 py-0.5 rounded border border-white/10">對調</button>
+                        </div>
+                        <div class="flex gap-1">
+                            <button onclick="getOSRM('roA', 'rdA', 'rD', 'btn-r', 'coord-r')" id="btn-r" class="btn-osrm">OSRM</button>
+                            <a id="gmaps-r" href="#" onclick="prepareGMaps('roA', 'rdA', this)" target="_blank" class="btn-gmaps">G-Maps</a>
+                        </div>
+                    </div>
+                    <div class="space-y-2 mb-3">
+                        <input type="text" id="roA" placeholder="返程起點" class="storage">
+                        <input type="text" id="rdA" placeholder="返程終點" class="storage">
+                        <div id="coord-r" class="coord-hint">抓取位置: <span class="loc-text"></span></div>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs text-slate-400">里程 (km):</span>
+                        <input type="number" id="rD" step="0.1" value="0.0" class="w-24 text-center font-bold text-emerald-400 storage">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. 結果 -->
+        <div id="resArea" class="hidden fade-in">
+            <div class="glass-card p-6 border-2 border-indigo-500/30 shadow-2xl">
+                <div id="detailList" class="space-y-1 mb-6"></div>
+                <div class="flex justify-between items-end border-t border-white/10 pt-4">
+                    <span class="text-sm font-bold text-indigo-400 italic">應撥付總金額</span>
+                    <span id="resTotal" class="text-4xl font-black text-white italic"></span>
+                </div>
+            </div>
+        </div>
+
+        <div class="fixed bottom-0 left-0 right-0 p-4 bg-slate-900/95 backdrop-blur-md border-t border-white/5 z-50">
+            <button onclick="calculateAll()" class="btn-main shadow-lg">計算總金額</button>
+        </div>
+    </div>
+
+    <script>
+        window.onload = function() {
+            loadAllData();
+            if(document.querySelectorAll('[id^="b-"]').length === 0) addTimeBlock();
+        };
+
+        function addTimeBlock(data = null) {
+            const id = data ? data.id : Date.now();
+            const div = document.createElement('div');
+            div.className = 'section-box fade-in relative mb-4';
+            div.id = `b-${id}`;
+            div.innerHTML = `
+                <button onclick="document.getElementById('b-${id}').remove(); saveAllData();" class="absolute -top-2 -right-2 bg-slate-800 text-slate-500 rounded-full w-6 h-6 border border-white/10 flex items-center justify-center">×</button>
+                <div class="grid grid-cols-2 gap-4">
+                    <div><span class="label-text">開始時間</span><input type="datetime-local" class="s-time" value="${data?data.s:''}" onchange="saveAllData()"></div>
+                    <div><span class="label-text">結束時間</span><input type="datetime-local" class="e-time" value="${data?data.e:''}" onchange="saveAllData()"></div>
+                </div>
+                <div class="mt-4 pt-3 border-t border-white/5">
+                    <span class="label-text">休息扣除 (期間不計費)</span>
+                    <div class="grid grid-cols-2 gap-4">
+                        <input type="datetime-local" class="bs-time text-[10px]" value="${data?data.bs:''}" onchange="saveAllData()">
+                        <input type="datetime-local" class="be-time text-[10px]" value="${data?data.be:''}" onchange="saveAllData()">
+                    </div>
+                </div>`;
+            document.getElementById('timeBlocks').appendChild(div);
+            saveAllData();
+        }
+
+        function prepareGMaps(startId, endId, linkEl) {
+            const origin = document.getElementById(startId).value.trim();
+            const destination = document.getElementById(endId).value.trim();
+            if(!origin || !destination) {
+                alert("請先輸入地址");
+                event.preventDefault();
+                return false;
+            }
+            saveAllData();
+            const url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&travelmode=driving`;
+            linkEl.href = url;
+            return true;
+        }
+
+        function saveAllData() {
+            const data = {
+                times: [],
+                oA: document.getElementById('oA').value,
+                dA: document.getElementById('dA').value,
+                oD: document.getElementById('oD').value,
+                roA: document.getElementById('roA').value,
+                rdA: document.getElementById('rdA').value,
+                rD: document.getElementById('rD').value
+            };
+            document.querySelectorAll('[id^="b-"]').forEach(b => {
+                data.times.push({
+                    id: b.id.replace('b-', ''),
+                    s: b.querySelector('.s-time').value,
+                    e: b.querySelector('.e-time').value,
+                    bs: b.querySelector('.bs-time').value,
+                    be: b.querySelector('.be-time').value
+                });
+            });
+            localStorage.setItem('interpreter_store_v10', JSON.stringify(data));
+        }
+
+        function loadAllData() {
+            const saved = localStorage.getItem('interpreter_store_v10');
+            if(!saved) return;
+            const data = JSON.parse(saved);
+            document.getElementById('oA').value = data.oA || '';
+            document.getElementById('dA').value = data.dA || '';
+            document.getElementById('oD').value = data.oD || '0.0';
+            document.getElementById('roA').value = data.roA || '';
+            document.getElementById('rdA').value = data.rdA || '';
+            document.getElementById('rD').value = data.rD || '0.0';
+            if(data.times && data.times.length > 0) {
+                document.getElementById('timeBlocks').innerHTML = '';
+                data.times.forEach(t => addTimeBlock(t));
+            }
+        }
+
+        function clearAllData() {
+            if(confirm("重置所有資料？")) {
+                localStorage.removeItem('interpreter_store_v10');
+                location.reload();
+            }
+        }
+
+        async function getOSRM(startId, endId, targetId, btnId, hintId) {
+            const originAddr = document.getElementById(startId).value;
+            const destAddr = document.getElementById(endId).value;
+            const btn = document.getElementById(btnId);
+            const hint = document.getElementById(hintId);
+            
+            if(!originAddr || !destAddr) {
+                alert("請輸入起訖點地址");
+                return;
+            }
+            
+            btn.innerText = "搜尋中...";
+            hint.style.display = "none";
+
+            try {
+                // Nominatim Search (加上台灣限制與詳細資訊)
+                const getCoords = async (addr) => {
+                    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addr)}&countrycodes=tw&limit=1&addressdetails=1`);
+                    const d = await res.json();
+                    if(d.length === 0) throw new Error(`找不到地址: ${addr}`);
+                    return {
+                        coord: `${d[0].lon},${d[0].lat}`,
+                        display: d[0].display_name.split(',')[0] // 取得主要地名
+                    };
+                };
+
+                const sData = await getCoords(originAddr);
+                const eData = await getCoords(destAddr);
+                
+                // 顯示座標抓取提示
+                hint.style.display = "block";
+                hint.querySelector('.loc-text').innerText = `${sData.display} → ${eData.display}`;
+
+                const osrm = await fetch(`https://router.project-osrm.org/route/v1/driving/${sData.coord};${eData.coord}?overview=false`);
+                const d = await osrm.json();
+                
+                if(d.code !== "Ok") throw new Error("OSRM 無法計算路徑");
+
+                // 取得里程並無條件進位到小數點第一位
+                const distanceKm = (d.routes[0].distance / 1000).toFixed(1);
+                document.getElementById(targetId).value = distanceKm;
+                
+                saveAllData();
+            } catch(e) { 
+                alert(e.message || "測距失敗，建議開啟 Google Maps 查看里程並手動輸入。"); 
+            } finally {
+                btn.innerText = "OSRM";
+            }
+        }
+
+        function copyAddr() {
+            document.getElementById('roA').value = document.getElementById('dA').value;
+            document.getElementById('rdA').value = document.getElementById('oA').value;
+            document.getElementById('rD').value = document.getElementById('oD').value;
+            saveAllData();
+        }
+
+        function calculateAll() {
+            let minuteChain = [];
+            document.querySelectorAll('[id^="b-"]').forEach(b => {
+                const s = b.querySelector('.s-time').value, e = b.querySelector('.e-time').value;
+                if(!s || !e) return;
+                let start = new Date(s), end = new Date(e);
+                const bs = b.querySelector('.bs-time').value, be = b.querySelector('.be-time').value;
+                const bS = bs ? new Date(bs) : null, bE = be ? new Date(be) : null;
+                let curr = new Date(start);
+                while(curr < end) {
+                    const ts = curr.getTime();
+                    const inB = (bS && bE && ts >= bS.getTime() && ts < bE.getTime());
+                    if(!inB) minuteChain.push(new Date(curr));
+                    curr.setMinutes(curr.getMinutes() + 1);
+                }
+            });
+            minuteChain.sort((a,b) => a-b);
+            
+            let total = 0, listHtml = `<p class="text-[10px] text-indigo-400 font-bold mb-3 uppercase tracking-tighter italic">酬金明細 (有效時數: ${minuteChain.length}分鐘)</p>`;
+            const isN = (d) => { const h = d.getHours(); return h < 6 || h >= 22; };
+            
+            if(minuteChain.length > 0) {
+                const p1 = minuteChain.slice(0, 120), p1N = p1.some(d => isN(d)), p1F = p1N ? 2000 : 1000;
+                total += p1F;
+                listHtml += `
+                    <div class="fee-item">
+                        <div>
+                            <span class="block">基礎酬金 (前2小時)</span>
+                            <span class="rule-tag">${p1N?'夜間時段 $2000':'日間時段 $1000'}</span>
+                        </div>
+                        <span class="fee-val">$${p1F}</span>
+                    </div>`;
+
+                if (minuteChain.length > 120) {
+                    const rem = minuteChain.slice(120);
+                    for (let i = 0; i < rem.length; i += 60) {
+                        const chunk = rem.slice(i, i + 60);
+                        const n = chunk.some(d => isN(d)), rate = n ? 1000 : 500;
+                        let f = (chunk.length >= 30) ? rate : (rate/2);
+                        let rule = (chunk.length >= 30) ? `滿30分計1h (${n?'夜':'日'}$${rate})` : `未滿30分計0.5h (${n?'夜':'日'}$${rate/2})`;
+                        total += f;
+                        listHtml += `
+                            <div class="fee-item">
+                                <div>
+                                    <span class="block">加計酬金 (第 ${Math.floor(i/60)+3} 小時)</span>
+                                    <span class="rule-tag">${rule}</span>
+                                </div>
+                                <span class="fee-val">$${f}</span>
+                            </div>`;
+                    }
+                }
+            }
+
+            const oD = parseFloat(document.getElementById('oD').value) || 0, rD = parseFloat(document.getElementById('rD').value) || 0;
+            listHtml += `<p class="text-[10px] text-emerald-400 font-bold mt-5 mb-3 uppercase tracking-tighter italic">交通補助明細 (含5%稅)</p>`;
+            
+            const getTrans = (d, l) => {
+                let taxD = Math.max(0, d - 10);
+                let f = Math.round(taxD * 2.431 * 1.05);
+                listHtml += `
+                    <div class="fee-item">
+                        <div>
+                            <span class="block">${l} (總長 ${d}km)</span>
+                            <span class="rule-tag">計費里程: ${taxD}km (扣除10km)</span>
+                        </div>
+                        <span class="fee-val">$${f}</span>
+                    </div>`;
+                return f;
+            };
+            
+            const transF = getTrans(oD, "去程路段") + getTrans(rD, "返程路段");
+            
+            document.getElementById('detailList').innerHTML = listHtml;
+            document.getElementById('resTotal').innerText = `$${(total + transF).toLocaleString()}`;
+            document.getElementById('resArea').classList.remove('hidden');
+            window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+        }
+    </script>
+</body>
+</html>
+
+```
+
